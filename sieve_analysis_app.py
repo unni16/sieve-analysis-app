@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from io import BytesIO
-from scipy.interpolate import make_interp_spline
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
@@ -97,13 +96,8 @@ if user_input:
 
             # Plot
             fig, ax = plt.subplots(figsize=(8, 5))
-            plot_df = df[df['Sieve Size (mm)'] > 0]
-            x = plot_df['Sieve Size (mm)']
-            y = plot_df['% Passing']
-            x_smooth = np.logspace(np.log10(x.min()), np.log10(x.max()), 300)
-            spline = make_interp_spline(np.log10(x), y, k=3)
-            y_smooth = spline(np.log10(x_smooth))
-            ax.scatter(x, y, color='black')  # Mark actual data points
+            ax.semilogx(df_plot['Sieve Size (mm)'], df_plot['% Passing'], marker='o', color='green')
+            ax.set_xlim(0.01, 10)
             ax.set_xticks([0.01, 0.1, 1, 10])
             ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
             ax.ticklabel_format(axis='x', style='plain')
@@ -111,7 +105,6 @@ if user_input:
             ax.set_xlabel("Sieve Size (mm) [Log Scale]")
             ax.set_ylabel("Cumulative % Passing")
             ax.set_title("Particle Size Distribution Curve")
-            
             st.pyplot(fig)
 
             # Interpretation
