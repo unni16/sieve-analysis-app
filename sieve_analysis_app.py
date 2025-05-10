@@ -12,8 +12,8 @@ st.set_page_config(page_title="Sieve Analysis Tool", layout="centered")
 st.title("🔬 Sieve Analysis Web App")
 st.write("Enter weight retained on each sieve (comma-separated):")
 
-# Fixed sieve sizes
-sieve_sizes = [4.75, 2.36, 1.88, 0.600, 0.300, 0.150, 0.075]
+# Updated sieve sizes including pan (0.0 mm)
+sieve_sizes = [4.75, 2.36, 1.18, 0.600, 0.300, 0.150, 0.075, 0.0]
 
 # User input
 user_input = st.text_input("Weight retained in grams (e.g. 150, 200, 250, ...)", "")
@@ -48,7 +48,6 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, plot_fig):
     elements.append(table)
     elements.append(Spacer(1, 12))
 
-    # Interpretation
     interpretation = f"""
     <b>D10</b>: {D10:.3f} mm<br/>
     <b>D30</b>: {D30:.3f} mm<br/>
@@ -62,12 +61,9 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, plot_fig):
     elements.append(Paragraph(interpretation, styles['BodyText']))
     elements.append(Spacer(1, 12))
 
-    # Plot
     img_buffer = BytesIO()
     plot_fig.savefig(img_buffer, format='png', bbox_inches='tight')
     img_buffer.seek(0)
-
-    # Correct way to add image
     img = Image(img_buffer, width=400, height=250)
     elements.append(img)
 
@@ -75,12 +71,12 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, plot_fig):
     buffer.seek(0)
     return buffer
 
-# Main app logic
+# Main logic
 if user_input:
     try:
         weight_retained = [float(x.strip()) for x in user_input.split(',')]
         if len(weight_retained) != len(sieve_sizes):
-            st.error(f"Please enter exactly {len(sieve_sizes)} values.")
+            st.error(f"Please enter exactly {len(sieve_sizes)} values (including pan).")
         else:
             df = pd.DataFrame({
                 'Sieve Size (mm)': sieve_sizes,
@@ -108,7 +104,7 @@ if user_input:
             ax.set_title("Particle Size Distribution Curve")
             st.pyplot(fig)
 
-            # Interpretation
+            # Interpolation
             def interpolate_diameter(percent):
                 return np.interp(percent, df['% Passing'][::-1], df['Sieve Size (mm)'][::-1])
 
@@ -130,13 +126,12 @@ if user_input:
             - **D10** = {D10:.3f} mm  
             - **D30** = {D30:.3f} mm  
             - **D60** = {D60:.3f} mm  
-            - **Coefficient of Uniformity (Cu)** = {Cu:.2f}  
-            - **Coefficient of Curvature (Cc)** = {Cc:.2f}  
+            - **Cu** = {Cu:.2f}  
+            - **Cc** = {Cc:.2f}  
             - **Gradation** = {gradation}  
-            - **Classification based on D10** = {classification}
+            - **Classification** = {classification}
             """)
 
-            # Download PDF
             pdf_bytes = create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, fig)
             st.download_button("📄 Download PDF Report", data=pdf_bytes, file_name="sieve_analysis_report.pdf", mime="application/pdf")
 
