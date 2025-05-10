@@ -2,24 +2,24 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.interpolate import make_interp_spline
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+from scipy.interpolate import interp1d
 
 st.set_page_config(page_title="Sieve Analysis Tool", layout="centered")
 st.title("🔬 Sieve Analysis Web App")
 st.write("Enter weight retained on each sieve (comma-separated):")
 
-# Fixed sieve sizes including pan (represented as 0.0 for now)
-sieve_sizes = [4.75, 2.36, 1.18, 0.600, 0.300, 0.150, 0.075, 0.0]
+# Fixed sieve sizes
+sieve_sizes = [4.75, 2.36, 1.88, 0.600, 0.300, 0.150, 0.075, 0.0]  # Added 0.0 for pan
 
 # User input
 user_input = st.text_input("Weight retained in grams (e.g. 150, 200, 250, ...)", "")
 
-def create_pdf(df, D10, D30, D60, Cu, Cc, classification, plot_fig):
+def create_pdf(df, D10, D30, D60, Cu, Cc, plot_fig):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     elements = []
@@ -30,10 +30,9 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, classification, plot_fig):
 
     # Table
     data = [["Sieve Size (mm)", "Weight Retained (g)", "% Retained", "Cum. % Retained", "% Passing"]]
-    for idx, row in df.iterrows():
-        sieve_label = "Pan" if row['Sieve Size (mm)'] == 0 else f"{row['Sieve Size (mm)']:.3f}"
+    for _, row in df.iterrows():
         data.append([
-            sieve_label,
+            f"{row['Sieve Size (mm)']:.3f}" if row['Sieve Size (mm)'] != 0 else "Pan",
             f"{row['Weight Retained (g)']:.2f}",
             f"{row['% Retained']:.2f}",
             f"{row['Cumulative % Retained']:.2f}",
@@ -50,24 +49,12 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, classification, plot_fig):
     elements.append(table)
     elements.append(Spacer(1, 12))
 
-    # Interpretation
-    interpretation = f"""
-    <b>D10</b>: {D10:.3f} mm<br/>
-    <b>D30</b>: {D30:.3f} mm<br/>
-    <b>D60</b>: {D60:.3f} mm<br/>
-    <b>Cu</b>: {Cu:.2f}<br/>
-    <b>Cc</b>: {Cc:.2f}<br/>
-    <b>Classification</b>: {classification}
-    """
-    elements.append(Paragraph("Interpretation:", styles['Heading2']))
-    elements.append(Paragraph(interpretation, styles['BodyText']))
-    elements.append(Spacer(1, 12))
-
     # Plot
     img_buffer = BytesIO()
     plot_fig.savefig(img_buffer, format='png', bbox_inches='tight')
     img_buffer.seek(0)
 
+    # Correct way to add image
     img = Image(img_buffer, width=400, height=250)
     elements.append(img)
 
@@ -79,11 +66,11 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, classification, plot_fig):
 if user_input:
     try:
         weight_retained = [float(x.strip()) for x in user_input.split(',')]
-        if len(weight_retained) != len(sieve_sizes):
-            st.error(f"Please enter exactly {len(sieve_sizes)} values.")
+        if len(weight_retained) != len(sieve_sizes) - 1:  # Exclude pan from input
+            st.error(f"Please enter exactly {len(sieve_sizes) - 1} values.")
         else:
             df = pd.DataFrame({
-                'Sieve Size (mm)': sieve_sizes,
+                'Sieve Size (mm)': sieve_sizes[:-1],  # Exclude pan
                 'Weight Retained (g)': weight_retained
             })
 
@@ -95,23 +82,22 @@ if user_input:
             st.subheader("Sieve Analysis Table")
             st.dataframe(df)
 
+            # Smooth line plotting using interpolation
+            x = df['Sieve Size (mm)']
+            y = df['% Passing']
+
+            # Ensure interpolation only occurs for valid data points
+            f = interp1d(x, y, kind='cubic', fill_value="extrapolate")
+            x_new = np.logspace(np.log10(0.01), np.log10(10), 500)  # Creating a log scale for x-axis
+            y_new = f(x_new)
+
             # Plot
             fig, ax = plt.subplots(figsize=(8, 5))
-            plot_df = df[df['Sieve Size (mm)'] > 0]  # exclude pan
-
-            x = plot_df['Sieve Size (mm)']
-            y = plot_df['% Passing']
-
-            x_smooth = np.logspace(np.log10(x.min()), np.log10(x.max()), 300)
-            spline = make_interp_spline(np.log10(x), y, k=3)
-            y_smooth = spline(np.log10(x_smooth))
-
-            ax.semilogx(x_smooth, y_smooth, color='green')
-            ax.scatter(x, y, color='black')  # actual data points
-
+            ax.plot(x_new, y_new, color='green')
             ax.set_xticks([0.01, 0.1, 1, 10])
             ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
             ax.ticklabel_format(axis='x', style='plain')
+
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.set_xlabel("Sieve Size (mm) [Log Scale]")
             ax.set_ylabel("Cumulative % Passing")
@@ -128,12 +114,6 @@ if user_input:
             Cu = D60 / D10 if D10 else float('inf')
             Cc = (D30 ** 2) / (D10 * D60) if D10 and D60 else float('inf')
 
-            classification = (
-                "Fine soil (silt/clay)" if D10 < 0.075 else
-                "Sand" if D10 < 2 else
-                "Gravel or Coarse soil"
-            )
-
             st.subheader("Interpretation")
             st.markdown(f"""
             - **D10** = {D10:.3f} mm  
@@ -141,11 +121,10 @@ if user_input:
             - **D60** = {D60:.3f} mm  
             - **Coefficient of Uniformity (Cu)** = {Cu:.2f}  
             - **Coefficient of Curvature (Cc)** = {Cc:.2f}  
-            - **Classification based on D10** = {classification}
             """)
 
             # Download PDF
-            pdf_bytes = create_pdf(df, D10, D30, D60, Cu, Cc, classification, fig)
+            pdf_bytes = create_pdf(df, D10, D30, D60, Cu, Cc, fig)
             st.download_button("📄 Download PDF Report", data=pdf_bytes, file_name="sieve_analysis_report.pdf", mime="application/pdf")
 
     except Exception as e:
