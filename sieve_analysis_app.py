@@ -12,13 +12,16 @@ st.set_page_config(page_title="Sieve Analysis Tool", layout="centered")
 st.title("🔬 Sieve Analysis Web App")
 st.write("Enter weight retained on each sieve (comma-separated):")
 
-# Updated sieve sizes including pan (0.0 mm)
+# Sieve sizes including pan
 sieve_sizes = [4.75, 2.36, 1.18, 0.600, 0.300, 0.150, 0.075, 0.0]
 
 # User input
 user_input = st.text_input("Weight retained in grams (e.g. 150, 200, 250, ...)", "")
 
-def create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, plot_fig):
+def interpolate_diameter(df, percent):
+    return np.interp(percent, df['% Passing'][::-1], df['Sieve Size (mm)'][::-1])
+
+def create_pdf(df, plot_fig, interpretation_text):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     elements = []
@@ -48,30 +51,22 @@ def create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, plot_fig):
     elements.append(table)
     elements.append(Spacer(1, 12))
 
-    interpretation = f"""
-    <b>D10</b>: {D10:.3f} mm<br/>
-    <b>D30</b>: {D30:.3f} mm<br/>
-    <b>D60</b>: {D60:.3f} mm<br/>
-    <b>Cu</b>: {Cu:.2f}<br/>
-    <b>Cc</b>: {Cc:.2f}<br/>
-    <b>Gradation</b>: {gradation}<br/>
-    <b>Classification</b>: {classification}
-    """
-    elements.append(Paragraph("Interpretation:", styles['Heading2']))
-    elements.append(Paragraph(interpretation, styles['BodyText']))
-    elements.append(Spacer(1, 12))
-
+    # Plot image
     img_buffer = BytesIO()
     plot_fig.savefig(img_buffer, format='png', bbox_inches='tight')
     img_buffer.seek(0)
     img = Image(img_buffer, width=400, height=250)
     elements.append(img)
+    elements.append(Spacer(1, 12))
+
+    # Interpretation text
+    elements.append(Paragraph("Interpretation", styles['Heading2']))
+    elements.append(Paragraph(interpretation_text, styles['Normal']))
 
     doc.build(elements)
     buffer.seek(0)
     return buffer
 
-# Main logic
 if user_input:
     try:
         weight_retained = [float(x.strip()) for x in user_input.split(',')]
@@ -91,48 +86,42 @@ if user_input:
             st.subheader("Sieve Analysis Table")
             st.dataframe(df)
 
-            # Plot
+            # Interpolation for interpretation
+            interp_df = df[df['Sieve Size (mm)'] > 0.0]
+            d10 = interpolate_diameter(interp_df, 10)
+            d30 = interpolate_diameter(interp_df, 30)
+            d60 = interpolate_diameter(interp_df, 60)
+            cu = d60 / d10 if d10 != 0 else np.nan
+            cc = (d30 ** 2) / (d10 * d60) if d10 != 0 and d60 != 0 else np.nan
+
+            # Interpretation without gradation text
+            interpretation_text = (
+                f"D10 = {d10:.3f} mm<br/>"
+                f"D30 = {d30:.3f} mm<br/>"
+                f"D60 = {d60:.3f} mm<br/>"
+                f"Uniformity Coefficient (Cu) = {cu:.2f}<br/>"
+                f"Coefficient of Curvature (Cc) = {cc:.2f}"
+            )
+
+            st.subheader("Interpretation")
+            st.markdown(interpretation_text, unsafe_allow_html=True)
+
+            # Filter for plot (exclude pan)
+            plot_df = interp_df
+
             fig, ax = plt.subplots(figsize=(8, 5))
-            ax.semilogx(df['Sieve Size (mm)'], df['% Passing'], marker='o', color='green')
-            ax.set_xticks([0.01, 0.1, 1, 10])
+            ax.semilogx(plot_df['Sieve Size (mm)'], plot_df['% Passing'], marker='o', color='green')
+            ax.set_xticks([0.075, 0.15, 0.3, 0.6, 1.18, 2.36, 4.75])
             ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
             ax.ticklabel_format(axis='x', style='plain')
-
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.set_xlabel("Sieve Size (mm) [Log Scale]")
             ax.set_ylabel("Cumulative % Passing")
             ax.set_title("Particle Size Distribution Curve")
             st.pyplot(fig)
 
-            # Interpolation
-            def interpolate_diameter(percent):
-                return np.interp(percent, df['% Passing'][::-1], df['Sieve Size (mm)'][::-1])
-
-            D10 = interpolate_diameter(10)
-            D30 = interpolate_diameter(30)
-            D60 = interpolate_diameter(60)
-            Cu = D60 / D10 if D10 else float('inf')
-            Cc = (D30 ** 2) / (D10 * D60) if D10 and D60 else float('inf')
-
-            gradation = "Well-graded" if Cu > 4 and 1 < Cc < 3 else "Poorly graded"
-            classification = (
-                "Fine soil (silt/clay)" if D10 < 0.075 else
-                "Sand" if D10 < 2 else
-                "Gravel or Coarse soil"
-            )
-
-            st.subheader("Interpretation")
-            st.markdown(f"""
-            - **D10** = {D10:.3f} mm  
-            - **D30** = {D30:.3f} mm  
-            - **D60** = {D60:.3f} mm  
-            - **Cu** = {Cu:.2f}  
-            - **Cc** = {Cc:.2f}  
-            - **Gradation** = {gradation}  
-            - **Classification** = {classification}
-            """)
-
-            pdf_bytes = create_pdf(df, D10, D30, D60, Cu, Cc, gradation, classification, fig)
+            # PDF
+            pdf_bytes = create_pdf(df, fig, interpretation_text)
             st.download_button("📄 Download PDF Report", data=pdf_bytes, file_name="sieve_analysis_report.pdf", mime="application/pdf")
 
     except Exception as e:
